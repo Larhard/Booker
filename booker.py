@@ -63,7 +63,7 @@ def gen_raw_selection(selection):
     if selection is None:
         return None
 
-    return ",".join(str(k) for k in selection)
+    return ",".join("{}" if k is None else str(k) for k in selection)
 
 
 def mktemp(prefix="booker-", suffix="", dir=None, text=False):
@@ -266,11 +266,11 @@ def pdfinfo(path):
     return result
 
 
-def lpr(path, printer, double_paged=False):
+def lpr(path, printer, double_paged=False, paper=Paper("a4")):
     args = ["lpr"]
     args += ["-P", printer]
     args += ["-o", "sides={}".format("two-sided-long-edge" if double_paged else "one-sided")]
-    args += ["-o", "media=a4"]
+    args += ["-o", "media={}".format(paper.lower)]
     args += [path]
 
     execute(*args)
@@ -326,6 +326,64 @@ class SinglePageBook(BaseBook):
         even_path = re.sub(r"(.*)(\.[^.]*)", r"\1-even\2", path)
 
         log.info("Using following paths for SinglePageBook generation: {} {}".format(odd_path, even_path))
+
+        book_path = mktemp(suffix=".pdf")
+
+        try:
+            res = self.book.generate(book_path)
+            assert res == (book_path,)
+
+            info = pdfinfo(book_path)
+            pages_count = info["Pages"]
+            assert pages_count % 2 == 0
+
+            pdfselect(book_path, odd_path, selection=range(1, pages_count, 2))
+            pdfselect(book_path, even_path, selection=range(pages_count, 1, -2))
+
+        finally:
+            os.remove(book_path)
+
+        return odd_path, even_path,
+
+
+class OneSideBook(BaseBook):
+    def __init__(self, content):
+        super(OneSideBook, self).__init__(content=content)
+
+    def generate(self, path):
+        content_path = mktemp(suffix=".pdf")
+
+        try:
+            res = self.content.generate(content_path)
+            assert res == (content_path,)
+
+            info = pdfinfo(content_path)
+            pages_count = info["Pages"]
+
+            pdfjam(
+                in_path=content_path,
+                out_path=path,
+                paper=Paper("a5"),
+                selection=list(range(1, pages_count + 1)) + ([None] * (pages_count % 2)),
+            )
+
+        finally:
+            os.remove(content_path)
+
+        return path,
+
+
+class OneSideSinglePageBook(BaseBook):
+    def __init__(self, content):
+        super(OneSideSinglePageBook, self).__init__(content=content)
+
+        self.book = OneSideBook(self.content)
+
+    def generate(self, path, odd_path=None, even_path=None):
+        odd_path = re.sub(r"(.*)(\.[^.]*)", r"\1-odd\2", path)
+        even_path = re.sub(r"(.*)(\.[^.]*)", r"\1-even\2", path)
+
+        log.info("Using following paths for OneSidedSinglePageBook generation: {} {}".format(odd_path, even_path))
 
         book_path = mktemp(suffix=".pdf")
 
@@ -416,6 +474,17 @@ def get_file(path, *args, **kwargs):
     return result
 
 
+def get_book_class(double_paged, one_sided):
+    if double_paged and not one_sided:
+        return Book
+    elif not double_paged and not one_sided:
+        return SinglePageBook
+    elif double_paged and one_sided:
+        return OneSideBook
+    elif not double_paged and one_sided:
+        return OneSideSinglePageBook
+
+
 def main(*args):
     parser = argparse.ArgumentParser()
     parser.add_argument("files", nargs="+")
@@ -424,6 +493,7 @@ def main(*args):
     parser.add_argument("-v", "--verbose", action="store_true")
     parser.add_argument("-s", "--select")
     parser.add_argument("-m", "--margins", type=int)
+    parser.add_argument("-1", "--one-sided", action="store_true")
 
     options = parser.parse_args(args)
 
@@ -433,7 +503,7 @@ def main(*args):
     if options.select is not None and len(options.files) > 1:
         raise ValueError("--select flag is possible for single file")
 
-    book_class = Book if options.double_paged else SinglePageBook
+    book_class = get_book_class(double_paged=options.double_paged, one_sided=options.one_sided)
 
     for path in options.files:
         file = get_file(path, raw_selection=options.select, margins=options.margins)
@@ -461,6 +531,7 @@ def main(*args):
                     lpr(
                         path=r,
                         printer=options.print,
+                        paper=Paper("a5" if options.one_sided else "a4"),
                     )
 
             finally:
