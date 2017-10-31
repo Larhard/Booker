@@ -266,10 +266,10 @@ def pdfinfo(path):
     return result
 
 
-def lpr(path, printer, double_paged=False, paper=Paper("a4")):
+def lpr(path, printer, double_paged=False, paper=Paper("a4"), edge="long"):
     args = ["lpr"]
     args += ["-P", printer]
-    args += ["-o", "sides={}".format("two-sided-long-edge" if double_paged else "one-sided")]
+    args += ["-o", "sides={}".format("two-sided-{}-edge".format(edge) if double_paged else "one-sided")]
     args += ["-o", "media={}".format(paper.lower)]
     args += [path]
 
@@ -532,6 +532,8 @@ def main(*args):
                         path=r,
                         printer=options.print,
                         paper=Paper("a5" if options.one_sided else "a4"),
+                        double_paged=options.double_paged,
+                        edge=("long" if options.one_sided else "short"),
                     )
 
             finally:
